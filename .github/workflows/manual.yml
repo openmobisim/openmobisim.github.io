@@ -1,0 +1,68 @@
+# The manual's site, openmobisim.github.io. This repository (openmobisim/openmobisim.github.io) holds only this
+# workflow: it builds the manual from the code repository, bahmanmdd/openmobisim, which is public, so no token is
+# needed, and publishes it here. It builds the latest release tag, or the tag or branch given when run by hand from the
+# Actions tab, and runs once a day, so a new release's manual is up within a day. The reference pages generated from
+# the code are committed with the manual, so the build needs neither the compiled core nor the cases.
+
+name: Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "A tag or branch of bahmanmdd/openmobisim (empty: the latest release tag)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - id: ref
+        env:
+          WANTED: ${{ inputs.ref }}
+        run: |
+          ref="$WANTED"
+          if [ -z "$ref" ]; then
+            ref=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/bahmanmdd/openmobisim.git 'v*' \
+              | head -n1 | sed 's#.*refs/tags/##')
+          fi
+          if [ -z "$ref" ]; then echo "No release tag yet: run by hand with a branch."; exit 1; fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: bahmanmdd/openmobisim
+          ref: ${{ steps.ref.outputs.ref }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r manual/requirements.txt
+      - run: sphinx-build -b html manual _site
+        env:
+          OPENMOBISIM_SOURCE: python/openmobisim
+          OPENMOBISIM_VERSION: ${{ steps.ref.outputs.version }}
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
